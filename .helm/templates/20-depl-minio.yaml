@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-minio
+  labels:
+    app: {{ .Chart.Name }}-minio
+  annotations:
+    werf.io/weight: "20"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-minio
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-minio
+    spec:
+#      imagePullSecrets:
+#        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+        - name: minio
+          image: {{ .Values.werf.image.minio }}
+          command:
+            - minio
+            - server
+            - --console-address
+            - ":9001"
+            - "/data/"
+          env:
+          - name: MINIO_ROOT_USER
+            {{- $valMap := pluck "AWS_ACCESS_KEY_ID" $.Values.app_env | first }}
+            {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+            value: {{  $val }}
+          - name: MINIO_ROOT_PASSWORD
+            {{- $valMap := pluck "AWS_SECRET_ACCESS_KEY" $.Values.app_env | first }}
+            {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+            value: {{ $val }}
+          volumeMounts:
+            - mountPath: /data/
+              name: data
+      restartPolicy: Always
+      volumes:
+        - name: data
+#          emptyDir:
+#            sizeLimit: 10Gi
+          persistentVolumeClaim:
+            claimName: storage-minio
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-minio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: linstor
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-minio
+spec:
+  selector:
+    app: {{ .Chart.Name }}-minio
+  ports:
+    - port: 9000
+      targetPort: 9000
+      protocol: TCP
+      name: minio-api
+    - port: 9001
+      targetPort: 9001
+      protocol: TCP
+      name: minio-console

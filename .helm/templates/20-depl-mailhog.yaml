@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-mailhog
+  labels:
+    app: {{ .Chart.Name }}-mailhog
+  annotations:
+    werf.io/weight: "20"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-mailhog
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-mailhog
+    spec:
+#      imagePullSecrets:
+#        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+        - name: redis
+          image: {{ .Values.werf.image.mailhog }}
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-mail
+spec:
+  selector:
+    app: {{ .Chart.Name }}-mailhog
+  ports:
+    - port: 25
+      targetPort: 1025
+      protocol: TCP
+      name: smtp
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailhog-ui
+spec:
+  selector:
+    app: {{ .Chart.Name }}-mailhog
+  ports:
+      - port: 8080
+        targetPort: 8025
+        protocol: TCP
+        name: webui
+

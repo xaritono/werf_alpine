@@ -1,0 +1,51 @@
+{
+    "access_log": "/dev/stdout",
+    "applications": {
+        "app": {
+            "root": "/www/public",
+            "script": "index.php",
+            "processes": {
+                "max": 16,
+                "spare": 8,
+                "idle_timeout": 10
+            },
+            "group": "unit",
+            "user": "unit",
+            "type": "php"
+        }
+    },
+    "listeners": {
+        "0.0.0.0:8080": {
+            "pass": "routes",
+            "forwarded": {
+                "protocol": "X-Forwarded-Proto",
+                "source": [
+                    "0.0.0.0/0"
+                ]
+            }
+        },
+        "0.0.0.0:8088": {
+            "pass": "routes"
+        }
+    },
+    "routes": [
+        {
+            "match": {
+                "uri": "~^.+\\.(css|js|png|jpg|jpeg|ico|svg|woff|woff2|gif|tpl)$"
+            },
+            "action": {
+                "share": [
+                    "/www/public/$uri"
+                ],
+                "fallback": {
+                    "pass": "applications/app"
+                }
+            }
+        },
+        {
+            "action": {
+                "pass": "applications/app"
+            }
+        }
+    ]
+}

@@ -1,0 +1,201 @@
+variables:
+  ANSIBLE_HOST_KEY_CHECKING: 'false'
+  ANSIBLE_FORCE_COLOR: 'true'
+  CI_DEBUG_TRACE: 'false'
+  DOCKER_BUILDKIT: 1
+
+  PROJECT_NAME: "ex-alpine"
+  WERF_STAPEL_IMAGE_NAME: "harbor.rncb.ru/rls/werf/stapel"
+  WERF_SYNCHRONIZATION: ":local"
+  WERF_REPO:  "harbor.rncb.ru/osis/${PROJECT_NAME}"
+  FINAL_REPO: "harbor.rncb.ru/osis-final/${PROJECT_NAME}"
+  RLS_REPO: "nexus-rls.rncb.ru/osis/${PROJECT_NAME}"
+  WERF_ALLOWED_LOCAL_CACHE_VOLUME_USAGE: 30
+  WERF_ALLOWED_DOCKER_STORAGE_VOLUME_USAGE: 30
+  WERF_ENV: "${CI_ENVIRONMENT_SLUG}"
+  WERF_NAMESPACE: "${PROJECT_NAME}--${CI_BUILD_REF_SLUG}"
+  SONAR_PROJECT_NAME: "${PROJECT_NAME}-backend"
+
+
+# Указываем этапы
+stages:
+  - build
+  - Secure Scan
+  - Code Scanning
+  - Security
+  - Reports
+  - deploy
+  - dismiss
+
+
+
+# ==================
+Build images:
+  stage: build
+  tags: [ osis-test ]
+  before_script:
+    - docker login -u ${CI_HARBOR_LOGIN} -p ${CI_HARBOR_PWD} harbor.rncb.ru
+  script:
+    - set -ex
+    - werf build
+    - werf build --final-repo=${FINAL_REPO}
+    - werf bundle publish --final-repo=${FINAL_REPO}
+  except:
+    - schedules
+    - master
+    - main
+
+Copying images to prod:
+  stage: build
+  tags: [ osis-test ]
+  before_script:
+    - docker login -u ${CI_HARBOR_LOGIN} -p ${CI_HARBOR_PWD} harbor.rncb.ru
+  script:
+    - set -ex
+    - werf export --tag=${FINAL_REPO}_ansible/%image% --skip-build
+    - echo "Waiting 60 sec for copy images"
+    - sleep 60
+  only:
+    - master
+    - main
+
+Test images:
+  stage: build
+  tags: [ osis-test ]
+  before_script:
+    - docker login -u ${CI_HARBOR_LOGIN} -p ${CI_HARBOR_PWD} harbor.rncb.ru
+  script:
+    - set -ex
+    - werf run --docker-options='--rm' vendor-prod -- composer check-platform-reqs
+    - ret=0
+#    - werf compose up --docker-compose-options="-f php-test.yml"
+#        --docker-compose-command-options="--abort-on-container-exit --remove-orphans --force-recreate --exit-code-from app app"
+#    - werf compose down --docker-compose-options="-f php-test.yml" --quiet
+    - echo "Exit Code - $ret"
+    - exit $ret
+  except:
+    - schedules
+    - main
+    - stage
+    - /^mna_.*/
+
+Deploy to Dev:
+  extends: .kube_deploy
+  tags: [ osis-test ]
+  environment:
+    name: ${CI_BUILD_REF_SLUG}
+    url: https://dummy-${WERF_NAMESPACE}-k3s.osis-test.rncb.ru/
+    on_stop: Stop Environment
+    auto_stop_in: 2 day
+#  variables:
+#    WERF_VALUES_ENV: ".helm/development_values.yaml"
+#    WERF_SECRET_VALUES_ENV: ".helm/development_secret-values.yaml"
+  artifacts:
+    paths:
+      - werf.yaml
+  except:
+    - schedules
+    - main
+    - stage
+
+Deploy to Prod:
+#  extends: .ansible_deploy
+  extends: .kube_deploy
+  stage: deploy
+  tags: [ osis-test ]
+  #  В рабочем проекте должен быть tags: [ osis-prod ]
+  environment:
+    name: ${CI_BUILD_REF_SLUG}
+    # В рабочем проекте можно указать "name: prod"
+    url: https://${PROJECT_NAME}--main-k3s.osis-test.rncb.ru/
+    on_stop: Stop Environment
+    auto_stop_in: 1 month
+  only:
+    - master
+    - main
+  when: manual
+
+# Удаление Environment и всего что с ним связано
+Stop Environment:
+  stage: dismiss
+  tags: [ osis-test ]
+  environment:
+    name: ${CI_BUILD_REF_SLUG}
+    action: stop
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+    - werf dismiss --with-namespace --final-repo=${RLS_REPO} || echo "Error"
+    - kubectl delete ns ${WERF_NAMESPACE} || echo "Error"
+  except:
+    - schedules
+    - master
+    - stage
+  when: manual
+
+
+# -- Templates --
+# Deploy template
+.kube_deploy:
+  stage: deploy
+  script:
+    - unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+    - export | grep "WERF\|CI_"
+    - werf converge --skip-build --final-repo=${RLS_REPO}
+  except: [schedules]
+
+# Ansible deploy
+.ansible_deploy:
+  stage: deploy
+  script:
+    - unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+    - export | grep CI
+    - werf helm secret file decrypt .ansible/roles/balancer/files/ssl/coins.rncb.ru.crt.crypt > .ansible/roles/balancer/files/ssl/coins.rncb.ru.crt
+    - werf helm secret file decrypt .ansible/roles/balancer/files/ssl/coins.rncb.ru.key.crypt > .ansible/roles/balancer/files/ssl/coins.rncb.ru.key
+    - mkdir -p .ansible/roles/app-backend/files/
+# Это для генерации енвов - здесь не применяется
+#    - werf render --skip-build -s .helm/templates/10-configmap.yaml | sed '1, /\.env/ d; s/^\ *//' > app.env
+#    - werf helm secret file encrypt app.env -o .ansible/roles/app-backend/files/app.env.crypt
+# -----------------------
+    - werf helm secret file decrypt .ansible/roles/app-backend/files/app.env.crypt -o .ansible/roles/app-backend/files/app.env
+    - ansible-playbook -i .ansible/inventories/coins-prod/hosts -u ci-runner .ansible/provision.yml
+    - rm -f .ansible/roles/balancer/files/ssl/coins.rncb.ru.crt
+    - rm -f .ansible/roles/balancer/files/ssl/coins.rncb.ru.key
+    - rm -f .ansible/roles/app-backend/files/app.env
+  except: [schedules]
+# ----------------
+
+
+# ======== Сканирование на безопасность ===========
+Make index:
+  stage: Security
+  tags: [ osis-test ]
+  before_script:
+    - docker login -u ${CI_HARBOR_LOGIN} -p ${CI_HARBOR_PWD} harbor.rncb.ru
+  script:
+    - export | grep CI
+    - echo -en "services:\n  app:\n    image:" > image_app.yml
+    - echo -e " \$WERF_APP_DOCKER_IMAGE_NAME\n" >> image_app.yml
+    - werf compose config --docker-compose-options="-f image_app.yml" --skip-build --quiet|grep "image:"|awk -v RLS=$RLS_REPO -F ":" '{print RLS ":" $3}' > image.txt
+    - rm -f app.env
+  artifacts:
+    expire_in: 1 hour
+    when: always
+    paths:
+      - image.txt
+  only:
+    - main
+    - master
+    - stage
+    - developer
+
+include:
+  - project: osis/ci-templates
+    file: 'Security_devops.yml'
+    rules:
+    - if: '$CI_COMMIT_REF_NAME == "main"'
+    - if: '$CI_COMMIT_REF_NAME == "master"'
+    - if: '$CI_COMMIT_REF_NAME == "stage"'
+    - if: '$CI_COMMIT_REF_NAME == "developer"'
+

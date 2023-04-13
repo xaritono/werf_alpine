@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.global.werf.name }}.configmap
+  annotations:
+    werf.io/weight: "10"
+    test: "{{ $.Values.werf.env }}"
+data:
+  .env: |
+  {{- range $name, $value := .Values.app_env }}
+    {{- $val := pluck $.Values.global.env $value | first | default $value._default }}
+    {{- $val := print $val | replace "%NAMESPACE%" $.Values.werf.namespace }}
+    {{- $val := print $val | replace "%CHARTNAME%" $.Chart.Name }}
+    {{ $name }}={{ $val }}
+    {{- /*
+           Можно добавлять новые замены по аналогии со строкой выше (replace....)
+           Это сделано для тех переменных, которые зависят от окружения, но в values.yaml нельзя передать им эти значения
+    */ -}}
+  {{- end }}
+

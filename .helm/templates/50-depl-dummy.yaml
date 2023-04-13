@@ -1,0 +1,220 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-dummy
+  labels:
+    app: {{ .Chart.Name }}-dummy
+  annotations:
+    werf.io/weight: "50"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-dummy
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-dummy
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+#      imagePullSecrets:
+#        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+        - name: web
+          image: {{ .Values.werf.image.webserver }}
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /etc/nginx/nginx.conf
+              name: nginx-conf
+              subPath: nginx.conf
+              readOnly: true
+            - mountPath: /usr/share/nginx/html/index.html
+              name: nginx-conf
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ .Chart.Name }}-dummy.configmap
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dummy
+spec:
+  selector:
+    app: {{ .Chart.Name }}-dummy
+  ports:
+      - port: 8080
+        targetPort: 8080
+        protocol: TCP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  labels:
+    app: {{ .Chart.Name }}-dummy
+  name: {{ .Chart.Name }}-dummy
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dummy-{{ .Values.werf.namespace }}-k3s.osis-test.rncb.ru
+      http:
+        paths:
+          - backend:
+              service:
+                name: dummy
+                port:
+                  number: 8080
+            pathType: ImplementationSpecific
+  tls:
+    - hosts:
+        - dummy-{{ .Values.werf.namespace }}-k3s.osis-test.rncb.ru
+      secretName: {{ .Chart.Name }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}-dummy.configmap
+data:
+  nginx.conf: |
+    pid /run/nginx.pid;
+    user nginx;
+    worker_processes 1;
+    error_log /dev/stdout info;
+    events {
+      worker_connections 512;
+      multi_accept on;
+      use epoll;
+    }
+    http {
+      tcp_nodelay on;
+      keepalive_timeout 15;
+      default_type application/octet-stream;
+      gzip on;
+      log_format docker '$remote_addr - $remote_user [$time_local] "$request" '
+      '$status $body_bytes_sent "$http_referer" '
+      '"$http_user_agent" "$http_x_forwarded_for" '
+      '"upstream:$upstream_addr" "$upstream_status" ';
+      access_log /dev/stdout docker;
+      include /etc/nginx/mime.types;
+      server {
+        listen 8080;
+        server_name _default;
+        location / {
+          root /usr/share/nginx/html/;
+          index index.html;
+        }
+      }
+    }
+
+  index.html: |
+    <style>*{
+        margin:0;
+        padding:0;
+        font-family:arial, tahoma
+    }
+    .con{
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        height:100%;
+        position:absolute;
+        top:0;
+        left:0;
+        width:100%;
+        flex-wrap:wrap;
+        align-content:center
+    }
+    .r{
+        display:flex;
+        flex-wrap:wrap;
+        width: 100%;
+        justify-content:center
+    }
+    .c{
+        border:1px solid #808080;
+        border-radius:5px;
+        margin:10px;
+        padding:20px;
+        text-align:center;
+        min-width:200px
+        box-shadow: 8px 8px 2px 1px rgba(0, 0, 255, .2);
+    }
+    .cred{
+        color: #A9A9A9;
+        margin: 15px 0 0
+    }
+    .t{
+        text-transform:capitalize
+    }
+    </style>
+    <div class="con">
+        <div class="r">
+            <h1 class="t">{{ .Chart.Name }} project</h1>
+        </div>
+        <div class="r">
+            <div class="c">
+                <a href="https://{{ .Values.werf.namespace }}-k3s.osis-test.rncb.ru/" target="_blank">Homepage</a>
+            </div>
+            <div class="c">
+                <div>
+                    <a href="https://{{ .Values.werf.namespace }}-k3s.osis-test.rncb.ru/admin" target="_blank">Admin panel</a>
+                </div>
+                <div class="cred">
+                    {{- $valMap := pluck "APP_ADMIN" $.Values.app_env | first }}
+                    {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+                    {{- $valMap := pluck "APP_PASSWORD" $.Values.app_env | first }}
+                    {{- $val2 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+                    Login: {{ $val1 }}
+                </div>
+                <div class="cred">
+                    Password: {{ $val2 }}
+                </div>
+            </div>
+            <div class="c">
+                <div>
+                    <a href="https://{{ .Values.werf.namespace }}-s3-k3s.osis-test.rncb.ru" target="_blank">S3 Storage</a>
+                </div>
+                <div class="cred">
+                    {{- $valMap := pluck "AWS_ACCESS_KEY_ID" $.Values.app_env | first }}
+                    {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+                    {{- $valMap := pluck "AWS_SECRET_ACCESS_KEY" $.Values.app_env | first }}
+                    {{- $val2 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+                    Login: {{ $val1 }} 
+                </div>
+                <div class="cred">
+                    Password: {{ $val2 }}
+                </div>
+            </div>
+            <div class="c">
+                <a href="https://{{ .Values.werf.namespace }}-mail-k3s.osis-test.rncb.ru" target="_blank">Mail</a>
+            </div>
+            <div class="c">
+                <div>
+                    <a href="https://{{ .Values.werf.namespace }}-pg-k3s.osis-test.rncb.ru" target="_blank">PG Admin</a>
+                </div>
+                <div class="cred">
+                    Login: admin@admin.com 
+                </div>
+                <div class="cred">
+                    Password: admin
+                </div>
+            </div>
+        </div>
+    </div>
+
+    
+    

@@ -1,0 +1,16 @@
+# Установка ПО на базовый образ. На основе этого образа собирается Production окружение
+# Так же, на его основе собирается образ для разработки и тестирования.
+# ВНИМАНИЕ, компоненты, неиспользуемые в Production, здесь устанавливать НЕЛЬЗЯ!
+# Если для разработки нужны какие-либо дополнительные пакеты - см. dev-additional.tmpl
+
+# Установка ПО
+- "apk add --no-cache --update curl unit-php81"
+
+# Установка основных модулей PHP
+# (Этот войдет в образ, который  будет использоваться в качестве базового, как в Production окружении, так и в разработке)
+- "apk add --no-cache --update \
+          php81-curl php81 \
+          php81-pgsql php81-pdo_pgsql php81-pecl-redis php81-zip php81-xml php81-xmlwriter php81-xmlreader \
+          php81-phar php81-mbstring php81-iconv php81-openssl php81-exif php81-tokenizer php81-fileinfo \
+          php81-simplexml php81-pcntl php81-posix php81-opcache
+  "

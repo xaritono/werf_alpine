@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-meilisearch
+  labels:
+    app: {{ .Chart.Name }}-meilisearch
+  annotations:
+    werf.io/weight: "20"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-meilisearch
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-meilisearch
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+      - name: meilisearch
+        image: {{ .Values.werf.image.meilisearch }}
+        command:
+          - "./meilisearch"
+        args:
+          {{- $valMap := pluck "MEILISEARCH_KEY" $.Values.app_env | first }}
+          {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+          - "--master-key"
+          - "{{ $val1 }}"
+          - "--no-analytics"
+        volumeMounts:
+          - mountPath: /data.ms
+            name: data
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+      restartPolicy: Always
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meilisearch
+spec:
+  selector:
+    app: {{ .Chart.Name }}-meilisearch
+  ports:
+    - port: 7700
+      targetPort: 7700
+      protocol: TCP
+#      name: port-meilisearch
+

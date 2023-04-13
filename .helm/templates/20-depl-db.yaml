@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-db
+  labels:
+    app: {{ .Chart.Name }}-db
+  annotations:
+    werf.io/weight: "20"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-db
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-db
+    spec:
+#      imagePullSecrets:
+#        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+        - name: db
+          image: {{ .Values.werf.image.db }}
+          env:
+            - name: POSTGRES_DB
+            {{- $valMap := pluck "DB_DATABASE" $.Values.app_env | first }}
+            {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              value: {{ $val }}
+            - name: POSTGRES_USER
+            {{- $valMap := pluck "DB_USERNAME" $.Values.app_env | first }}
+            {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              value: {{ $val }}
+            - name: POSTGRES_PASSWORD
+            {{- $valMap := pluck "DB_PASSWORD" $.Values.app_env | first }}
+            {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              value: {{ $val }}
+          volumeMounts:
+            - mountPath: /var/lib/postgresql
+              name: data
+      restartPolicy: Always
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: storage-db
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: linstor
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-db
+spec:
+  selector:
+    app: {{ .Chart.Name }}-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP

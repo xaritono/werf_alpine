@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-app-migrate
+  annotations:
+    "werf.io/weight": "50"
+spec:
+  ttlSecondsAfterFinished: 30
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: worker
+          image: {{ .Values.werf.image.tools }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: minio_access
+            {{- $valMap := pluck "AWS_ACCESS_KEY_ID" $.Values.app_env | first }}
+            {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+            {{- $valMap := pluck "AWS_SECRET_ACCESS_KEY" $.Values.app_env | first }}
+            {{- $val2 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              value: "{{ $val1 }} {{ $val2 }}"
+            - name: http_proxy
+              value: ""
+            - name: HTTP_PROXY
+              value: ""
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Подготовка Minio S3
+              set -ex
+              sleep 10
+              export TERM="xterm"
+              {{- $valMap := pluck "AWS_ENDPOINT" $.Values.app_env | first }}
+              {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              /bin/mcli alias set localminio {{ $val }} $minio_access 
+              {{- $valMap := pluck "AWS_BUCKET" $.Values.app_env | first }}
+              {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              /bin/mcli mb localminio/{{ $val }} || :
+              /bin/mcli anonymous set public localminio/{{ $val }} || :
+              /bin/mcli ls localminio/{{ $val }} >/dev/null
+              # Миграция
+              {{- $valMap := pluck "APP_ADMIN" $.Values.app_env | first }}
+              {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+              {{- $valMap := pluck "APP_PASSWORD" $.Values.app_env | first }}
+              {{- $val2 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+               echo "======= This is a test only ======="
+               echo "Login:    [{{ $val1 }}]"
+               echo "Password: [{{ $val2 }}]"
+#              mkdir -p /www/storage/app/public /www/storage/logs
+#              mkdir -p /www/storage/framework/cache/data /www/storage/framework/sessions
+#              mkdir -p /www/storage/framework/testing/disk/local /www/storage/framework/views
+#              php artisan orchid:admin admin {{ $val1 }} {{ $val2 }}
+          volumeMounts:
+            - mountPath: /www/.env
+              name: env-file
+              subPath: .env
+      volumes:
+        - name: env-file
+          configMap:
+            name: {{ .Values.global.werf.name }}.configmap
+---

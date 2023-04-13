@@ -1,0 +1,135 @@
+# Переменные окружения PHP приложения
+# Делаем такие окружения:
+#    dev
+#    test (запуск тестирования с помощью специально-подготовленного docker-compose файла на gitlab-runner'е)
+#    stage
+#    prod
+#  Для любых, которые не указаны - _default
+#
+#  Предлагается использовать _default для всех окружений, кроме test, stage, prod.
+#
+
+app_env:
+  APP_NAME:
+    _default: "%CHARTNAME%"
+  APP_ENV:
+    test: testing
+    stage: production
+    prod: production
+    _default: testing
+  APP_KEY:
+    prod: "base64:dGVzdC1hcHBsaWNhdGlvbi1wcm9kCg=="
+    _default: "base64:dGVzdC1hcHBsaWNhdGlvbi1kZWZhdWx0Cg=="
+  APP_DEBUG:
+    stage: "false"
+    prod: "false"
+    _default: true
+  APP_URL:
+    stage: "https://test-app1.osis-stg.rncb.ru"
+    prod: "https://test-app1.rncb.ru"
+    _default: "http://%NAMESPACE%-k3s.osis-test.rncb.ru"
+
+  LOG_CHANNEL:
+    stage: stdout
+    prod: stdout
+    _default: stack
+  LOG_DEPRECATIONS_CHANNEL:
+    _default: "null"
+  LOG_LEVEL:
+    stage: info
+    prod: info
+    _default: debug
+
+  DB_CONNECTION:
+    _default: pgsql
+
+  SCOUT_DRIVER:
+    _default: meilisearch
+  MEILISEARCH_HOST:
+    _default: http://meilisearch:7700
+    prod: http://meilisearch-osis.rncb.ru:7700
+
+  BROADCAST_DRIVER:
+    _default: log
+  CACHE_DRIVER:
+    _default: file
+  FILESYSTEM_DRIVER:
+    _default: local
+  QUEUE_CONNECTION:
+    test_disable: sync
+    _default: redis
+
+  SESSION_DRIVER:
+    test_disable: file
+    _default: redis
+  SESSION_LIFETIME:
+    _default: 120
+  SESSION_STORE:
+    _default: redis
+
+  MEMCACHED_HOST:
+    _default: 127.0.0.1
+
+  REDIS_CLIENT:
+    _default: predis
+  REDIS_PORT:
+    _default: 6379
+  REDIS_PREFIX:
+    _default: test-app1__
+  HORIZON_PREFIX:
+    _default: test-app__
+  REDIS_CLUSTER:
+    _default: false
+  REDIS_QUEUE:
+    _default: jobs
+
+  MAIL_MAILER:
+    test: log
+    _default: smtp
+  MAIL_PORT:
+    _default: 1025
+    prod: 25
+  MAIL_ENCRYPTION:
+    _default: "null"
+  MAIL_FROM_ADDRESS:
+    prod: "no-reply@rncb.ru"
+    _default: "no-reply@no-reply.local"
+  MAIL_FROM_NAME:
+    _default: "%CHARTNAME%"
+#  TEST_MAIL_TO:
+#    prod: "_"
+#    _default: "test@test.com"
+
+  AWS_DEFAULT_REGION:
+    _default: "us-east-1"
+  AWS_BUCKET:
+    test: ""
+    _default: coins
+  AWS_URL:
+    prod: "/test-app1/"
+    _default: "/storage/"
+  AWS_ENDPOINT:
+    _default: "http://svc-minio:9000"
+    prod: "http://s3-osis-prod.rncb.ru:9000"
+  AWS_USE_PATH_STYLE_ENDPOINT:
+    test: false
+    _default: true
+
+  PUSHER_APP_ID:
+    _default: ""
+  PUSHER_APP_KEY:
+    _default: ""
+  PUSHER_APP_SECRET:
+    _default: ""
+  PUSHER_APP_CLUSTER:
+    _default: "mt1"
+
+  MIX_PUSHER_APP_KEY:
+    _default: ""
+  MIX_PUSHER_APP_CLUSTER:
+    _default: ""
+
+  URL_GENERATOR_DEFAULT_AMOUNT:
+    _default: 100000
+  URL_GENERATOR_DEFAULT_STEP:
+    _default: 1000

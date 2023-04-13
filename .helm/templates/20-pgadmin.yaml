@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-pgadmin
+  labels:
+    app: {{ .Chart.Name }}-pgadmin
+  annotations:
+    werf.io/weight: "20"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-pgadmin
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-pgadmin
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+#      imagePullSecrets:
+#        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+        - name: pgadmin
+          image: nexus-rls.rncb.ru/dpage/pgadmin4
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              value: admin@admin.com
+            - name: PGADMIN_DEFAULT_PASSWORD
+              value: admin
+          volumeMounts:
+            - name: servers-config
+              mountPath: /pgadmin4/servers.json
+              subPath: servers.json
+      restartPolicy: Always
+      volumes:
+        - name: servers-config
+          configMap:
+            name: {{ .Chart.Name }}-pgadmin
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}-pgadmin
+data:
+  servers.json: |
+    {
+    "Servers": {
+      "1": {
+        "Name": "DB",
+        "Group": "Servers",
+        {{- $valMap := pluck "DB_PORT" $.Values.app_env | first }}
+        {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+        "Port": {{ $val1 }},
+        {{- $valMap := pluck "DB_USERNAME" $.Values.app_env | first }}
+        {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+        "Username": "{{ $val1 }}",
+        {{- $valMap := pluck "DB_HOST" $.Values.app_env | first }}
+        {{- $val1 := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+        "Host": "{{ $val1 }}",
+        "SSLMode": "prefer",
+        "MaintenanceDB": "postgres"
+        }
+      }
+    }
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin
+spec:
+  selector:
+    app: {{ .Chart.Name }}-pgadmin
+  ports:
+    - port: 8080
+      targetPort: 80
+      protocol: TCP
+      name: db
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    #    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Forwarded-Proto: https";
+  labels:
+    app: {{ .Chart.Name }}-pgadmin
+  name: {{ .Chart.Name }}-pgadmin
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ .Values.werf.namespace }}-pg-k3s.osis-test.rncb.ru
+      http:
+        paths:
+          - backend:
+              service:
+                name: pgadmin
+                port:
+                  number: 8080
+            pathType: ImplementationSpecific
+  tls:
+    - hosts:
+        - {{ .Values.werf.namespace }}-pg-k3s.osis-test.rncb.ru
+      secretName: {{ .Chart.Name }}

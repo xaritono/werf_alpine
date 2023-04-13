@@ -1,0 +1,94 @@
+services:
+  app:
+    command: unitd --no-daemon
+    depends_on:
+      db:
+        condition: service_healthy
+      redis1:
+        condition: service_healthy
+    entrypoint: /docker-entrypoint.sh
+    environment:
+      ENV: devPC
+      HTTP_PROXY: ''
+      PHP_IDE_CONFIG: serverName=DockerExample
+      http_proxy: ''
+    healthcheck:
+      retries: 3
+      test:
+      - CMD
+      - curl
+      - localhost:8088/api/v1/health
+    image: ex-alpine:993aaaab5fbf941797335ea69a72e38dd7dc13693d551972f990ddcf-1674136403878
+    restart: always
+    volumes:
+    - /Data/git/example_werf_alpine/src:/www:rw
+    - /Data/git/example_werf_alpine:/Full:rw
+    - /Data/git/example_werf_alpine/.docker/kube.app/php.ini_dev:/usr/local/etc/php/php.ini:ro
+    - /Data/git/example_werf_alpine/.helm/unit.json:/docker-entrypoint.d/unit.json:ro
+    - /Data/git/example_werf_alpine/src/.env.dev:/www/.env:ro
+  db:
+    environment:
+      POSTGRES_DB: exdb
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+    healthcheck:
+      interval: 1s
+      retries: 30
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres
+      timeout: 3s
+    image: ex-alpine:46bf4f148760c03c61044045f3c0c74bd66b24786e928e2ab9ee281d-1674136353461
+    restart: always
+    volumes:
+    - /Data/git/example_werf_alpine/storage/db:/var/lib/postgresql/data:rw
+  init:
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: '/bin/sh -c " /bin/mcli alias set localminio http://minio:9000 minio_user
+      minio_password; /bin/mcli mb localminio/coins; /bin/mcli policy set public localminio/coins;
+      echo Done; while true; do sleep 30; done" '
+    image: ex-alpine:3e091d475b7e7515cfb13bdbe3e4bff000777ad8e908da9783efd150-1674136443095
+  minio:
+    command: server --console-address ":9001" /data/
+    environment:
+      MINIO_ROOT_PASSWORD: minio_password
+      MINIO_ROOT_USER: minio_user
+    healthcheck:
+      interval: 5s
+      retries: 3
+      test:
+      - CMD
+      - curl
+      - localhost:9000/minio/health/live
+      timeout: 20s
+    image: ex-alpine:58602da1fb9636359d5d9be5f49a3dda2cb1821c0a6720d290ba18dc-1674136352966
+    volumes:
+    - /Data/git/example_werf_alpine/storage/minio/data:/data:rw
+  redis1:
+    command: redis-server --requirepass password
+    healthcheck:
+      interval: 1s
+      retries: 30
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      timeout: 3s
+    image: ex-alpine:b549928f05a2e98a10669b2cfde3873e29d9d30d6d85ab0c7f5891e0-1674136345729
+  webserver:
+    depends_on:
+      app:
+        condition: service_started
+    image: ex-alpine:54de2ace6d941548aea567f67fd1ac47331118823bd73d4c59ce9b84-1674136462912
+    links:
+    - app
+    ports:
+    - 0.0.0.0:8080:80/tcp
+    restart: always
+    volumes:
+    - /Data/git/example_werf_alpine/src/public:/www/public:rw
+    - /Data/git/example_werf_alpine/.docker/kube.web/nginx.conf:/etc/nginx/nginx.conf:ro
+version: '3'
+

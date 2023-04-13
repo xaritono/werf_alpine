@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-redis
+  labels:
+    app: {{ .Chart.Name }}-redis
+  annotations:
+    werf.io/weight: "20"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-redis
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-redis
+    spec:
+#      imagePullSecrets:
+#        - name: {{ .Values.global.docker_repo }}-private-key
+      containers:
+        - name: redis
+          image: {{ .Values.werf.image.redis }}
+          command:
+            - redis-server
+            {{- $valMap := pluck "REDIS_PASSWORD" $.Values.app_env | first }}
+            {{- $val := pluck $.Values.global.env $valMap | first | default $valMap._default }}
+            - --requirepass {{  $val }}
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-redis
+spec:
+  selector:
+    app: {{ .Chart.Name }}-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP

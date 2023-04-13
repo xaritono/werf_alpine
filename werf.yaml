@@ -1,0 +1,250 @@
+project: ex-alpine
+configVersion: 1
+deploy:
+  #  helmRelease: example-[[ env ]]
+  #  helmReleaseSlug: false
+  # namespace переопределен в .gitlab-ci.yml
+  namespace: >-
+    [[ project ]]-{{ env "CI_COMMIT_REF_SLUG" }}
+
+---
+# ========================
+# Для корректной сборки на компьютерах, не использующих nexus-rls в качестве прокси, не будем использовать его для сборки.
+# Для того, чтобы отличать сборку локальную от сборки на gitlab-runner, будем ориентироваться на установленную переменную
+# CI_NEXUS_RLS_LOGIN
+# В окружении без прокси, при запуске make build, устанавливается значение этой переменной="-"
+# При сборке на gitlab-runner, эта переменная содержит иное значение.
+# ========================
+
+
+# Основной базовый образ
+image: base-img
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}alpine:3.17.0
+shell:
+  setup:
+    - set -ex
+    # Настройка системы
+    - export DEBIAN_FRONTEND="noninteractive"
+    - cp /etc/apk/repositories /etc/apk/repositories_orig
+{{- if ne (env "CI_NEXUS_RLS_LOGIN") "-" }} # Для локальной сборки это не нужно - прокси не используется
+    - unset http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY
+    - sed -i "s/dl-cdn.alpinelinux.org/{{ env "CI_NEXUS_RLS_LOGIN" }}:{{ env "CI_NEXUS_RLS_PWD" }}@nexus-rls.rncb.ru\/repository/" /etc/apk/repositories
+{{- end }}
+    - addgroup -g 101 unit
+    - adduser -G unit -h /nonexistent -s /bin/false -u 101 -D unit
+    - mkdir /www
+    # Обновимся по максимуму
+    - sed -i "s/v3.17/edge/" /etc/apk/repositories
+    - apk upgrade --no-cache
+    # Установка ПО
+{{ include "base-install.tmpl" . | indent 4 }}
+    # timeZone setting
+    - apk add --no-cache --update tzdata
+    - cp /usr/share/zoneinfo/Etc/GMT-3 /etc/localtime
+    - apk del tzdata --no-cache
+    # Удалим ненужный мусор и конф.информацию
+    - mv /etc/apk/repositories_orig /etc/apk/repositories
+docker:
+  WORKDIR: /www
+---
+
+# Здесь есть инструменты для сборки и всякая приятная штука для разработки + minio cli (mcli)
+image: pretools
+fromImage: base-img
+import:
+  - image: miniomc
+    before: setup
+    add: /bin/mc
+    to: /bin/mcli
+shell:
+  setup:
+    - set -ex
+    # Настройка системы
+    - export DEBIAN_FRONTEND="noninteractive"
+    - cp /etc/apk/repositories /etc/apk/repositories_orig
+{{- if ne (env "CI_NEXUS_RLS_LOGIN") "-" }} # Для локальной сборки это не нужно - прокси не используется
+    - unset http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY
+    - sed -i "s/dl-cdn.alpinelinux.org/{{ env "CI_NEXUS_RLS_LOGIN" }}:{{ env "CI_NEXUS_RLS_PWD" }}@nexus-rls.rncb.ru\/repository/" /etc/apk/repositories
+    # Устанавливаем Composer
+    - curl https://{{ env "CI_NEXUS_RLS_LOGIN" }}:{{ env "CI_NEXUS_RLS_PWD" }}@nexus-rls.rncb.ru/repository/distribs/builders/composer -o /usr/local/bin/composer
+{{- else}}
+    - curl https://getcomposer.org/installer -o composer-setup.php
+    - php composer-setup.php
+    - rm -f composer-setup.php
+    - mv composer.phar /usr/local/bin/composer
+{{- end}}
+{{ include "dev-additinal.tmpl" . | indent 4 }}
+    - chmod +x /usr/local/bin/composer
+    - ln -s /usr/local/bin/composer /bin/
+    # Удалим ненужный мусор
+    - mv /etc/apk/repositories_orig /etc/apk/repositories
+---
+
+# Контейнер для локальной разработки и отладке на Dev контуре.
+# Имеет на борту разные утилиты
+image: tools
+fromImage: pretools
+git:
+  - add: /.docker/kube.app
+    to: /.docker/kube.app
+    owner: nobody
+    group: nogroup
+    stageDependencies:
+      setup:
+        - '**'
+shell:
+  setup:
+    - mkdir -m 755 /docker-entrypoint.d
+    - cp -p /.docker/kube.app/showconfig.sh /docker-entrypoint.d
+    - cp -p /.docker/kube.app/docker-entrypoint.sh /
+    - chmod 755 /docker-entrypoint.sh /docker-entrypoint.d/*.sh
+---
+
+# Предварительная Сборка для прода (установка зависимостей)
+# Отсюда нужны только /www/vendor
+image: vendor-prod
+fromImage: pretools
+git:
+  - add: /src
+    to: /www
+    owner: nobody
+    group: nogroup
+    excludePaths:
+      - '\.[a-z]'
+    stageDependencies:
+      setup:
+        - '**'
+shell:
+  setup:
+    - set -ex
+    - cd /www
+{{- if ne (env "CI_NEXUS_RLS_LOGIN") "-" }} # Для локальной сборки это не нужно - прокси не используется
+    - unset http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY
+    #- composer config repo.nexus-rls.rncb.ru composer https://nexus-rls.rncb.ru/repository/composer
+    - composer config --global repositories.name composer https://{{ env "CI_NEXUS_RLS_LOGIN" }}:{{ env "CI_NEXUS_RLS_PWD" }}@nexus-rls.rncb.ru/repository/composer/
+    - composer config --global repositories.packagist.org false
+    - echo "{\"http-basic\":{\"nexus-rls.rncb.ru\":{\"username\":\""{{ env "CI_NEXUS_RLS_LOGIN" }}"\",\"password\":\""{{ env "CI_NEXUS_RLS_PWD" }}"\"}}}">~/.composer/auth.json
+    # Настроим proxy для npm
+    #    - NPM_AUTH=`echo -n "{{ env "CI_NEXUS_RLS_LOGIN" }}:{{ env "CI_NEXUS_RLS_PWD" }}"|base64`
+    #    - npm config set -g registry=https://nexus-rls.rncb.ru/repository/npm-proxy/
+    #    - npm config set -g //nexus-rls.rncb.ru/repository/npm-proxy/:_auth=${NPM_AUTH}
+    #    - npm install
+    #    - npm run production
+{{- end }}
+    # Хитрый финт ушами, типа сначала обновим .lock, а потом проинсталлим из него пакеты (хрень, но пока так:( )
+    - composer update  --prefer-dist --no-scripts --no-dev -o
+    - composer install --prefer-dist --no-scripts --no-dev -o
+    - chown -R nobody:nogroup /www/vendor
+    # Удалим мусор
+    - rm -Rf node_modules
+    - rm -Rf ~/.composer
+    - rm -f /etc/npmrc
+    - rm -Rf ~/.npm
+---
+
+# Основной рабочий образ
+image: app
+fromImage: base-img
+import:
+  - image: vendor-prod
+    after: setup
+    add: /www/vendor
+    to:  /www/vendor
+git:
+  - add: /src
+    to: /www
+    owner: nobody
+    group: nogroup
+    excludePaths:
+      - '\.[a-z]'
+  - add: /.docker/kube.app
+    to: /.docker/kube.app
+    owner: nobody
+    group: nogroup
+    stageDependencies:
+      setup:
+        - '**'
+    excludePaths:
+      - 'unit.json'
+shell:
+  setup:
+    - set -ex
+    - cp /.docker/kube.app/php.ini_prod /etc/php81/php.ini
+    - mkdir -m 755 /docker-entrypoint.d
+    - cp /.docker/kube.app/showconfig.sh /docker-entrypoint.d/
+    - chmod 755 /docker-entrypoint.d/*.sh
+    - cp /.docker/kube.app/docker-entrypoint.sh /
+    - chmod 755 /docker-entrypoint.sh
+    - chown -R unit:unit /www/bootstrap
+    - chmod -R 750 /www/bootstrap
+    - mkdir -p /usr/tmp
+    - chown -R unit:unit /etc/php81 /var/lib/unit/ /run /usr/tmp
+    - ln -s /dev/stdout /var/log/unit.log
+docker:
+  USER: unit
+  ENTRYPOINT: [ "/docker-entrypoint.sh" ]
+  CMD: [ "unitd" , "--no-daemon" ]
+---
+
+# Init контейнер для app в кубе
+# Содержит Dev набор компонент
+image: init
+fromImage: vendor-prod
+shell:
+  setup:
+    - set -ex
+    - cd /www
+{{- if ne (env "CI_NEXUS_RLS_LOGIN") "-" }} # Для локальной сборки это не нужно - прокси не используется
+    - unset http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY
+    - composer config --global repositories.name composer https://{{ env "CI_NEXUS_RLS_LOGIN" }}:{{ env "CI_NEXUS_RLS_PWD" }}@nexus-rls.rncb.ru/repository/composer/
+    - composer config --global repositories.packagist.org false
+    - echo "{\"http-basic\":{\"nexus-rls.rncb.ru\":{\"username\":\""{{ env "CI_NEXUS_RLS_LOGIN" }}"\",\"password\":\""{{ env "CI_NEXUS_RLS_PWD" }}"\"}}}">~/.composer/auth.json
+{{- end}}
+    - composer update  --no-scripts --lock
+    - composer install --no-scripts
+    # Настроим права
+    - mkdir -p /www/bootstrap/cache
+    - chown -R unit:unit /www/bootstrap
+    - chmod -R 750 /www/bootstrap
+    # Удалим мусор
+    - rm -Rf ~/.composer
+---
+
+image: webserver
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}nginx:1.21.6
+import:
+  - image: vendor-prod
+    after: install
+    add: /www/public
+    to: /www/public
+git:
+  - add: /.docker/kube.web/nginx.conf
+    to: /etc/nginx/nginx.conf
+shell:
+  setup:
+    - rm -f /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+---
+
+# Сопутствующие образы
+image: miniomc
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}minio/mc:RELEASE.2022-07-06T14-54-36Z
+---
+image: db
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}postgres:14.4
+---
+image: minio
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}minio/minio:RELEASE.2022-07-04T21-02-54Z
+---
+image: mailhog
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}mailhog/mailhog:v1.0.1
+---
+image: redis
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}redis:alpine3.17
+---
+image: meilisearch
+from: {{ if ne (env "CI_NEXUS_RLS_LOGIN") "-" }}harbor.rncb.ru/rls/{{ end }}getmeili/meilisearch:v0.26.1
+
+#-- 2023-02-05_14:55:01
+
+
+

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.global.werf.name }}.unit-json
+  annotations:
+    werf.io/weight: "10"
+data:
+  {{- (.Files.Glob "unit.json").AsConfig | nindent 2 }}

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-horizon
+  labels:
+    app: {{ .Chart.Name }}-horizon
+  annotations:
+    werf.io/weight: "60"
+#    "helm.sh/hook": post-upgrade, post-install
+#    "helm.sh/hook-weight": "60"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-horizon
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-horizon
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+        - name: app
+          image: {{ .Values.werf.image.app }}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: ENV
+            value: {{ .Values.werf.env }}
+          - name: http_proxy
+            value: ""
+          - name: HTTP_PROXY
+            value: ""
+          volumeMounts:
+          - mountPath: /www/.env
+            name: env-file
+            subPath: .env
+          - mountPath: /www/storage
+            name: app-storage
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -ex
+              mkdir -p /www/storage/app/public /www/storage/logs
+              mkdir -p /www/storage/framework/cache/data /www/storage/framework/sessions
+              mkdir -p /www/storage/framework/testing/disk/local /www/storage/framework/views
+              echo "/usr/bin/php artisan horizon"
+              sleep 60
+              echo "This is a Demo. Restarting every 1 minutes. Like horizon crashed."
+          # health check не нужны - при слете horizon, под сам перезапустится.
+      restartPolicy: Always
+      volumes:
+        - name: env-file
+          configMap:
+            name: {{ .Values.global.werf.name }}.configmap
+        - name: app-storage
+          emptyDir:
+            sizeLimit: 1Gi

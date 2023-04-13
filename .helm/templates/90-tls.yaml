@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/tls
+metadata:
+  name: {{ .Chart.Name }}
+data:
+  tls.crt: {{ werf_secret_file "osis-test.crt" | b64enc  }}
+  tls.key: {{ werf_secret_file "osis-test.key" | b64enc  }}

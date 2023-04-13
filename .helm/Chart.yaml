@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ex-alpine
+maintainers:
+  - name: Nick A. Markov
+    email: MarkovNA@rncb.ru
+

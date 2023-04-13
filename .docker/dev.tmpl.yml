@@ -1,0 +1,97 @@
+version: '3'
+services:
+  app:
+    depends_on:
+      db:
+        condition: service_healthy
+      redis1:
+        condition: service_healthy
+    environment:
+      ENV: devPC
+      HTTP_PROXY: ''
+      PHP_IDE_CONFIG: serverName=DockerExample
+      http_proxy: ''
+    image: $WERF_TOOLS_DOCKER_IMAGE_NAME
+    restart: always
+    entrypoint: '/docker-entrypoint.sh'
+    command: 'unitd --no-daemon'
+    healthcheck:
+      retries: 3
+      test:
+        - CMD
+        - curl
+        - localhost:8088/api/v1/health
+    volumes:
+    - ./src/:/www/:rw
+    - ./:/Full:rw
+    - ./.docker/kube.app/php.ini_dev:/usr/local/etc/php/php.ini:ro
+    - ./.helm/unit.json:/docker-entrypoint.d/unit.json:ro
+    - ./src/.env.dev:/www/.env:ro
+  db:
+    environment:
+      POSTGRES_DB: exdb
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+    healthcheck:
+      interval: 1s
+      retries: 30
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres
+      timeout: 3s
+    image: $WERF_DB_DOCKER_IMAGE_NAME
+    restart: always
+    volumes:
+    - ./storage/db:/var/lib/postgresql/data
+  init:
+    depends_on:
+    - minio
+    entrypoint: '/bin/sh -c " 
+      /bin/mcli alias set localminio http://minio:9000 minio_user minio_password; 
+      /bin/mcli mb localminio/coins; 
+      /bin/mcli policy set public localminio/coins; 
+      echo Done; 
+      while true; do sleep 30; done" '
+    image: $WERF_INIT_DOCKER_IMAGE_NAME
+  minio:
+    command: server --console-address ":9001" /data/
+    environment:
+      MINIO_ROOT_PASSWORD: minio_password
+      MINIO_ROOT_USER: minio_user
+    healthcheck:
+      interval: 5s
+      retries: 3
+      test:
+      - CMD
+      - curl
+      - localhost:9000/minio/health/live
+      timeout: 20s
+    image: $WERF_MINIO_DOCKER_IMAGE_NAME
+#    ports:
+#    - 9000:9000
+#    - 9001:9001
+    volumes:
+    - ./storage/minio/data:/data
+  redis1:
+    command: redis-server --requirepass password
+    healthcheck:
+      interval: 1s
+      retries: 30
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      timeout: 3s
+    image: $WERF_REDIS_DOCKER_IMAGE_NAME
+  webserver:
+    depends_on:
+    - app
+    image: $WERF_WEBSERVER_DOCKER_IMAGE_NAME
+    links:
+    - app
+    ports:
+    - 0.0.0.0:8080:80
+    restart: always
+    volumes:
+    - ./src/public:/www/public
+    - ./.docker/kube.web/nginx.conf:/etc/nginx/nginx.conf:ro

@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+#    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Forwarded-Proto: https";
+  labels:
+    app: {{ .Chart.Name }}-minio
+  name: {{ .Chart.Name }}-minio
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ .Values.werf.namespace }}-s3-k3s.osis-test.rncb.ru
+      http:
+        paths:
+          - backend:
+              service:
+                name: svc-minio
+                port:
+                  number: 9001
+            pathType: ImplementationSpecific
+  tls:
+    - hosts:
+      - {{ .Values.werf.namespace }}-s3-k3s.osis-test.rncb.ru
+      secretName: {{ .Chart.Name }}

@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-app
+  labels:
+    app: {{ .Chart.Name }}-app
+  annotations:
+    werf.io/weight: "60"
+#    "helm.sh/hook": post-upgrade, post-install
+#    "helm.sh/hook-weight": "60"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-app
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-app
+      annotations:
+        reloader.stakater.com/auto: "true"
+    spec:
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+        - name: app
+          image: {{ .Values.werf.image.app }}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: ENV
+            value: {{ .Values.werf.env }}
+          - name: http_proxy
+            value: ""
+          - name: HTTP_PROXY
+            value: ""
+          volumeMounts:
+          - mountPath: /www/.env
+            name: env-file
+            subPath: .env
+          - mountPath: /www/storage
+            name: app-storage
+          - mountPath: /docker-entrypoint.d/unit.json
+            name: unit-json
+            subPath: unit.json
+#          livenessProbe:
+#            httpGet:
+#              port: 8088
+#              path: /
+#            initialDelaySeconds: 30
+#            periodSeconds: 10
+#            failureThreshold: 10
+#            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              port: 8088
+              path: /api/v1/health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 5
+      initContainers:
+        - name: init
+          image: {{ .Values.werf.image.app }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: http_proxy
+              value: ""
+            - name: HTTP_PROXY
+              value: ""
+          command:
+            - /bin/sh
+            - -c
+            - |
+               set -ex
+               mkdir -p /www/storage/app/public /www/storage/logs
+               mkdir -p /www/storage/framework/cache/data /www/storage/framework/sessions
+               mkdir -p /www/storage/framework/testing/disk/local /www/storage/framework/views
+          volumeMounts:
+            - mountPath: /www/.env
+              name: env-file
+              subPath: .env
+            - mountPath: /www/storage
+              name: app-storage
+      restartPolicy: Always
+      volumes:
+        - name: env-file
+          configMap:
+            name: {{ .Values.global.werf.name }}.configmap
+        - name: app-storage
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: unit-json
+          configMap:
+            name: {{ .Values.global.werf.name }}.unit-json
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+spec:
+  selector:
+    app: {{ .Chart.Name }}-app
+  ports:
+      - port: 8080
+        targetPort: 8080
+        protocol: TCP
+        name: app
